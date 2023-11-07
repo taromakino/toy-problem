@@ -10,7 +10,6 @@ from torchmetrics import Accuracy
 from utils.enums import Task
 from utils.nn_utils import MLP, one_hot, arr_to_cov, arr_to_tril
 
-
 IMAGE_EMBED_SHAPE = (32, 3, 3)
 IMAGE_EMBED_SIZE = np.prod(IMAGE_EMBED_SHAPE)
 
@@ -51,18 +50,19 @@ class Encoder(nn.Module):
         self.z_size = z_size
         self.rank = rank
         self.cnn = CNN()
-        self.mu = MLP(IMAGE_EMBED_SIZE + N_ENVS, h_sizes, 2 * z_size)
-        self.low_rank = MLP(IMAGE_EMBED_SIZE + N_ENVS, h_sizes, 2 * z_size * 2 * rank)
-        self.diag = MLP(IMAGE_EMBED_SIZE + N_ENVS, h_sizes, 2 * z_size)
+        self.mu = MLP(IMAGE_EMBED_SIZE + N_CLASSES + N_ENVS, h_sizes, 2 * z_size)
+        self.low_rank = MLP(IMAGE_EMBED_SIZE + N_CLASSES + N_ENVS, h_sizes, 2 * z_size * 2 * rank)
+        self.diag = MLP(IMAGE_EMBED_SIZE + N_CLASSES + N_ENVS, h_sizes, 2 * z_size)
 
-    def forward(self, x, e):
+    def forward(self, x, y, e):
         batch_size = len(x)
         x = self.cnn(x).view(batch_size, -1)
+        y_one_hot = one_hot(y, N_CLASSES)
         e_one_hot = one_hot(e, N_ENVS)
-        mu = self.mu(x, e_one_hot)
-        low_rank = self.low_rank(x, e_one_hot)
+        mu = self.mu(x, y_one_hot, e_one_hot)
+        low_rank = self.low_rank(x, y_one_hot, e_one_hot)
         low_rank = low_rank.reshape(batch_size, 2 * self.z_size, 2 * self.rank)
-        diag = self.diag(x, e_one_hot)
+        diag = self.diag(x, y_one_hot, e_one_hot)
         return D.MultivariateNormal(mu, scale_tril=arr_to_tril(low_rank, diag))
 
 
@@ -121,7 +121,7 @@ class Prior(nn.Module):
 
 class VAE(pl.LightningModule):
     def __init__(self, task, z_size, rank, h_sizes, prior_init_sd, y_mult, beta, reg_mult, lr, weight_decay,
-            alpha, lr_infer, n_infer_steps):
+                 alpha, lr_infer, n_infer_steps):
         super().__init__()
         self.save_hyperparameters()
         self.task = task
@@ -152,7 +152,7 @@ class VAE(pl.LightningModule):
 
     def loss(self, x, y, e):
         # z_c,z_s ~ q(z_c,z_s|x,y,e)
-        posterior_dist = self.encoder(x, e)
+        posterior_dist = self.encoder(x, y, e)
         z = self.sample_z(posterior_dist)
         # E_q(z_c,z_s|x,y,e)[log p(x|z_c,z_s)]
         log_prob_x_z = self.decoder(x, z).mean()
@@ -165,7 +165,7 @@ class VAE(pl.LightningModule):
         kl = D.kl_divergence(posterior_dist, prior_dist).mean()
         prior_reg = self.prior_reg(prior_dist)
         return log_prob_x_z, log_prob_y_zc, kl, prior_reg
-    
+
     def prior_reg(self, prior_dist):
         mu = torch.zeros((1, 2 * self.z_size), device=self.device)
         cov = torch.eye(2 * self.z_size, device=self.device).unsqueeze(0)
@@ -197,7 +197,7 @@ class VAE(pl.LightningModule):
         y_pred = self.classifier(z_c).view(-1)
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
         # log q(z_c,z_s|x,y,e)
-        log_prob_z_xye = self.encoder(x, e).log_prob(z)
+        log_prob_z_xye = self.encoder(x, y, e).log_prob(z)
         loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z_xye
         return loss
 
@@ -205,7 +205,7 @@ class VAE(pl.LightningModule):
         batch_size = len(x)
         y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
         e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
-        return nn.Parameter(self.encoder(x, e).loc.detach())
+        return nn.Parameter(self.encoder(x, y, e).loc.detach())
 
     def opt_infer_loss(self, x, y_value, e_value):
         batch_size = len(x)
