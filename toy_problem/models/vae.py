@@ -87,37 +87,31 @@ class Decoder(nn.Module):
 
 
 class Prior(nn.Module):
-    def __init__(self, z_size, rank, h_sizes):
+    def __init__(self, z_size, rank, prior_init_sd):
         super().__init__()
         self.z_size = z_size
-        self.rank = rank
-        self.mu_causal = MLP(N_ENVS, h_sizes, z_size)
-        self.low_rank_causal = MLP(N_ENVS, h_sizes, z_size * rank)
-        self.diag_causal = MLP(N_ENVS, h_sizes, z_size)
+        self.mu_causal = nn.Parameter(torch.zeros(N_ENVS, z_size))
+        self.low_rank_causal = nn.Parameter(torch.zeros(N_ENVS, z_size, rank))
+        self.diag_causal = nn.Parameter(torch.zeros(N_ENVS, z_size))
+        nn.init.normal_(self.mu_causal, 0, prior_init_sd)
+        nn.init.normal_(self.low_rank_causal, 0, prior_init_sd)
+        nn.init.normal_(self.diag_causal, 0, prior_init_sd)
         # p(z_s|y,e)
-        self.mu_spurious = MLP(N_CLASSES + N_ENVS, h_sizes, z_size)
-        self.low_rank_spurious = MLP(N_CLASSES + N_ENVS, h_sizes, z_size * rank)
-        self.diag_spurious = MLP(N_CLASSES + N_ENVS, h_sizes, z_size)
+        self.mu_spurious = nn.Parameter(torch.zeros(N_CLASSES, N_ENVS, z_size))
+        self.low_rank_spurious = nn.Parameter(torch.zeros(N_CLASSES, N_ENVS, z_size, rank))
+        self.diag_spurious = nn.Parameter(torch.zeros(N_CLASSES, N_ENVS, z_size))
+        nn.init.normal_(self.mu_spurious, 0, prior_init_sd)
+        nn.init.normal_(self.low_rank_spurious, 0, prior_init_sd)
+        nn.init.normal_(self.diag_spurious, 0, prior_init_sd)
 
     def causal_params(self, e):
-        batch_size = len(e)
-        e_one_hot = one_hot(e, N_ENVS)
-        mu = self.mu_causal(e_one_hot)
-        low_rank = self.low_rank_causal(e_one_hot)
-        low_rank = low_rank.reshape(batch_size, self.z_size, self.rank)
-        diag = self.diag_causal(e_one_hot)
-        cov = arr_to_cov(low_rank, diag)
+        mu = self.mu_causal[e]
+        cov = arr_to_cov(self.low_rank_causal[e], self.diag_causal[e])
         return mu, cov
 
     def spurious_params(self, y, e):
-        batch_size = len(y)
-        y_one_hot = one_hot(y, N_CLASSES)
-        e_one_hot = one_hot(e, N_ENVS)
-        mu = self.mu_spurious(y_one_hot, e_one_hot)
-        low_rank = self.low_rank_spurious(y_one_hot, e_one_hot)
-        low_rank = low_rank.reshape(batch_size, self.z_size, self.rank)
-        diag = self.diag_spurious(y_one_hot, e_one_hot)
-        cov = arr_to_cov(low_rank, diag)
+        mu = self.mu_spurious[y, e]
+        cov = arr_to_cov(self.low_rank_spurious[y, e], self.diag_spurious[y, e])
         return mu, cov
 
     def log_prob_causal(self, z_c):
@@ -154,8 +148,8 @@ class Prior(nn.Module):
 
 
 class VAE(pl.LightningModule):
-    def __init__(self, task, z_size, rank, h_sizes, y_mult, beta, reg_mult, lr, weight_decay, alpha, lr_infer,
-            n_infer_steps):
+    def __init__(self, task, z_size, rank, h_sizes, prior_init_sd, y_mult, beta, reg_mult, lr, weight_decay, alpha,
+            lr_infer, n_infer_steps):
         super().__init__()
         self.save_hyperparameters()
         self.task = task
@@ -173,7 +167,7 @@ class VAE(pl.LightningModule):
         # p(x|z_c,z_s)
         self.decoder = Decoder(z_size, h_sizes)
         # p(z_c,z_s|y,e)
-        self.prior = Prior(z_size, rank, h_sizes)
+        self.prior = Prior(z_size, rank, prior_init_sd)
         # p(y|z_c)
         self.classifier = MLP(z_size, h_sizes, 1)
         self.eval_metric = Accuracy('binary')
@@ -246,19 +240,15 @@ class VAE(pl.LightningModule):
         loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z
         return loss
 
-    def make_z_param(self, x):
+    def make_z_param(self, x, y_value, e_value):
         batch_size = len(x)
-        values = []
-        for y_value in range(N_CLASSES):
-            y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
-            for e_value in range(N_ENVS):
-                e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
-                values.append(self.encoder(x, y, e).loc)
-        return nn.Parameter(torch.stack(values).mean(dim=0))
+        y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
+        e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
+        return nn.Parameter(self.encoder(x, y, e).loc.detach())
 
-    def opt_infer_loss(self, x, y_value):
+    def opt_infer_loss(self, x, y_value, e_value):
         batch_size = len(x)
-        z_param = self.make_z_param(x)
+        z_param = self.make_z_param(x, y_value, e_value)
         optim = Adam([z_param], lr=self.lr_infer)
         y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
         for _ in range(self.n_infer_steps):
@@ -272,8 +262,9 @@ class VAE(pl.LightningModule):
         loss_candidates = []
         y_candidates = []
         for y_value in range(N_CLASSES):
-            loss_candidates.append(self.opt_infer_loss(x, y_value)[:, None])
-            y_candidates.append(y_value)
+            for e_value in range(N_ENVS):
+                loss_candidates.append(self.opt_infer_loss(x, y_value, e_value)[:, None])
+                y_candidates.append(y_value)
         loss_candidates = torch.hstack(loss_candidates)
         y_candidates = torch.tensor(y_candidates, device=self.device)
         opt_loss = loss_candidates.min(dim=1)
