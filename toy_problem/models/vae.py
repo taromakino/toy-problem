@@ -104,15 +104,42 @@ class Prior(nn.Module):
         nn.init.normal_(self.low_rank_spurious, 0, prior_init_sd)
         nn.init.normal_(self.diag_spurious, 0, prior_init_sd)
 
+    def causal_params(self, e):
+        mu = self.mu_causal[e]
+        cov = arr_to_cov(self.low_rank_causal[e], self.diag_causal[e])
+        return mu, cov
+
+    def spurious_params(self, y, e):
+        mu = self.mu_spurious[y, e]
+        cov = arr_to_cov(self.low_rank_spurious[y, e], self.diag_spurious[y, e])
+        return mu, cov
+
+    def log_prob_causal(self, z_c):
+        batch_size = len(z_c)
+        values = []
+        for e_value in range(N_ENVS):
+            e = torch.full((batch_size,), e_value, dtype=torch.long, device=z_c.device)
+            dist = D.MultivariateNormal(*self.causal_params(e))
+            values.append(dist.log_prob(z_c).unsqueeze(-1))
+        values = torch.hstack(values)
+        return torch.logsumexp(values, dim=1)
+
+    def log_prob_spurious(self, z_s):
+        batch_size = len(z_s)
+        values = []
+        for y_value in range(N_CLASSES):
+            y = torch.full((batch_size,), y_value, dtype=torch.long, device=z_s.device)
+            for e_value in range(N_ENVS):
+                e = torch.full((batch_size,), e_value, dtype=torch.long, device=z_s.device)
+                dist = D.MultivariateNormal(*self.spurious_params(y, e))
+                values.append(dist.log_prob(z_s).unsqueeze(-1))
+        values = torch.hstack(values)
+        return torch.logsumexp(values, dim=1)
+
     def forward(self, y, e):
         batch_size = len(y)
-        # Causal
-        mu_causal = self.mu_causal[e]
-        cov_causal = arr_to_cov(self.low_rank_causal[e], self.diag_causal[e])
-        # Spurious
-        mu_spurious = self.mu_spurious[y, e]
-        cov_spurious = arr_to_cov(self.low_rank_spurious[y, e], self.diag_spurious[y, e])
-        # Block diagonal
+        mu_causal, cov_causal = self.causal_params(e)
+        mu_spurious, cov_spurious = self.spurious_params(y, e)
         mu = torch.hstack((mu_causal, mu_spurious))
         cov = torch.zeros(batch_size, 2 * self.z_size, 2 * self.z_size, device=y.device)
         cov[:, :self.z_size, :self.z_size] = cov_causal
@@ -190,35 +217,35 @@ class VAE(pl.LightningModule):
         self.log('val_kl', kl, on_step=False, on_epoch=True)
         self.log('val_loss', loss, on_step=False, on_epoch=True)
 
-    def infer_loss(self, x, y, e, z):
+    def infer_loss(self, x, y, z):
         # log p(x|z_c,z_s)
         log_prob_x_z = self.decoder(x, z)
         # log p(y|z_c)
         z_c, z_s = torch.chunk(z, 2, dim=1)
         y_pred = self.classifier(z_c).view(-1)
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
-        # KL(q(z_c,z_s|x) || p(z_c|e)p(z_s|y,e))
-        posterior_dist = self.encoder(x, y, e)
-        prior_dist = self.prior(y, e)
-        kl = D.kl_divergence(posterior_dist, prior_dist)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl
+        # log p(z)
+        log_prob_zc = self.prior.log_prob_causal(z_c)
+        log_prob_zs = self.prior.log_prob_spurious(z_s)
+        log_prob_z = log_prob_zc + log_prob_zs
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z
         return loss
 
-    def make_z_param(self, x, y_value, e_value):
-        batch_size = len(x)
+    def make_z_param(self, batch_size, y_value, e_value):
         y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
         e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
-        return nn.Parameter(self.encoder(x, y, e).loc.detach())
+        causal_dist = D.MultivariateNormal(*self.prior.causal_params(e))
+        spurious_dist = D.MultivariateNormal(*self.prior.spurious_params(y, e))
+        return nn.Parameter(torch.hstack((causal_dist.loc, spurious_dist.loc)))
 
     def opt_infer_loss(self, x, y_value, e_value):
         batch_size = len(x)
-        z_param = self.make_z_param(x, y_value, e_value)
+        z_param = self.make_z_param(batch_size, y_value, e_value)
         y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
-        e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
         optim = Adam([z_param], lr=self.lr_infer)
         for _ in range(self.n_infer_steps):
             optim.zero_grad()
-            loss = self.infer_loss(x, y, e, z_param)
+            loss = self.infer_loss(x, y, z_param)
             loss.mean().backward()
             optim.step()
         return loss.detach().clone()
