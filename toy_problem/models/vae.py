@@ -240,15 +240,10 @@ class VAE(pl.LightningModule):
         loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z
         return loss
 
-    def make_z_param(self, x, y_value, e_value):
+    def opt_infer_loss(self, x, y_value):
         batch_size = len(x)
-        y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
-        e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
-        return nn.Parameter(self.encoder(x, y, e).loc.detach())
-
-    def opt_infer_loss(self, x, y_value, e_value):
-        batch_size = len(x)
-        z_param = self.make_z_param(x, y_value, e_value)
+        z_param = nn.Parameter(torch.zeros(batch_size, 2 * self.z_size, device=self.device))
+        nn.init.normal_(z_param)
         optim = Adam([z_param], lr=self.lr_infer)
         y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
         for _ in range(self.n_infer_steps):
@@ -262,9 +257,8 @@ class VAE(pl.LightningModule):
         loss_candidates = []
         y_candidates = []
         for y_value in range(N_CLASSES):
-            for e_value in range(N_ENVS):
-                loss_candidates.append(self.opt_infer_loss(x, y_value, e_value)[:, None])
-                y_candidates.append(y_value)
+            loss_candidates.append(self.opt_infer_loss(x, y_value)[:, None])
+            y_candidates.append(y_value)
         loss_candidates = torch.hstack(loss_candidates)
         y_candidates = torch.tensor(y_candidates, device=self.device)
         opt_loss = loss_candidates.min(dim=1)
