@@ -10,6 +10,7 @@ from torchmetrics import Accuracy
 from utils.enums import Task
 from utils.nn_utils import MLP, one_hot, arr_to_cov, arr_to_tril
 
+
 IMAGE_EMBED_SHAPE = (32, 3, 3)
 IMAGE_EMBED_SIZE = np.prod(IMAGE_EMBED_SHAPE)
 
@@ -120,8 +121,8 @@ class Prior(nn.Module):
 
 
 class VAE(pl.LightningModule):
-    def __init__(self, task, z_size, rank, h_sizes, prior_init_sd, y_mult, beta, reg_mult, lr, weight_decay,
-                 alpha, lr_infer, n_infer_steps):
+    def __init__(self, task, z_size, rank, h_sizes, prior_init_sd, y_mult, beta, reg_mult, lr, weight_decay, alpha,
+            lr_infer, n_infer_steps):
         super().__init__()
         self.save_hyperparameters()
         self.task = task
@@ -196,9 +197,11 @@ class VAE(pl.LightningModule):
         z_c, z_s = torch.chunk(z, 2, dim=1)
         y_pred = self.classifier(z_c).view(-1)
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
-        # log q(z_c,z_s|x,y,e)
-        log_prob_z_xye = self.encoder(x, y, e).log_prob(z)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z_xye
+        # KL(q(z_c,z_s|x) || p(z_c|e)p(z_s|y,e))
+        posterior_dist = self.encoder(x, y, e)
+        prior_dist = self.prior(y, e)
+        kl = D.kl_divergence(posterior_dist, prior_dist)
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl
         return loss
 
     def make_z_param(self, x, y_value, e_value):
