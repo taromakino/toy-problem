@@ -223,6 +223,17 @@ class VAE(pl.LightningModule):
         self.log('val_kl', kl, on_step=False, on_epoch=True)
         self.log('val_loss', loss, on_step=False, on_epoch=True)
 
+    def log_prob_z(self, x, z):
+        batch_size = len(z)
+        values = []
+        for y_value in range(N_CLASSES):
+            y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
+            for e_value in range(N_ENVS):
+                e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
+                values.append(self.encoder(x, y, e).log_prob(z).unsqueeze(-1))
+        values = torch.hstack(values)
+        return torch.logsumexp(values, dim=1)
+
     def infer_loss(self, x, y, z):
         # log p(x|z_c,z_s)
         log_prob_x_z = self.decoder(x, z)
@@ -231,25 +242,25 @@ class VAE(pl.LightningModule):
         y_pred = self.classifier(z_c).view(-1)
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
         # log p(z)
-        log_prob_zc = self.prior.log_prob_causal(z_c)
-        log_prob_zs = self.prior.log_prob_spurious(z_s)
-        log_prob_z = log_prob_zc + log_prob_zs
+        log_prob_z = self.log_prob_z(x, z)
         loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z
         return loss
 
-    def make_z_param(self, batch_size, y_value, e_value):
-        y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
-        e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
-        causal_dist = D.MultivariateNormal(*self.prior.causal_params(e))
-        spurious_dist = D.MultivariateNormal(*self.prior.spurious_params(y, e))
-        return nn.Parameter(torch.hstack((causal_dist.loc, spurious_dist.loc)))
+    def make_z_param(self, x):
+        batch_size = len(x)
+        values = []
+        for y_value in range(N_CLASSES):
+            y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
+            for e_value in range(N_ENVS):
+                e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
+                values.append(self.encoder(x, y, e).loc)
+        return nn.Parameter(torch.stack(values).mean(dim=0))
 
     def opt_infer_loss(self, x, y_value):
         batch_size = len(x)
-        z_param = nn.Parameter(torch.zeros(batch_size, 2 * self.z_size, device=self.device))
-        nn.init.normal_(z_param)
-        y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
+        z_param = self.make_z_param(x)
         optim = Adam([z_param], lr=self.lr_infer)
+        y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
         for _ in range(self.n_infer_steps):
             optim.zero_grad()
             loss = self.infer_loss(x, y, z_param)
