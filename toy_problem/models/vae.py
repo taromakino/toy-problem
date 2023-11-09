@@ -135,7 +135,7 @@ class VAE(pl.LightningModule):
         # p(z_c,z_s|y,e)
         self.prior = Prior(z_size, rank, prior_init_sd)
         # p(y|z_c)
-        self.classifier = MLP(z_size, h_sizes, N_CLASSES)
+        self.classifier = MLP(z_size, h_sizes, 1)
         self.eval_metric = Accuracy('binary')
 
     def sample_z(self, dist):
@@ -152,8 +152,8 @@ class VAE(pl.LightningModule):
         log_prob_x_z = self.decoder(x, z).mean()
         # E_q(z_c|x)[log p(y|z_c)]
         z_c, z_s = torch.chunk(z, 2, dim=1)
-        y_pred = self.classifier(z_c)
-        log_prob_y_zc = -F.cross_entropy(y_pred, y)
+        y_pred = self.classifier(z_c).view(-1)
+        log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float())
         # KL(q(z_c,z_s|x) || p(z_c|e)p(z_s|y,e))
         prior_dist = self.prior(y, e)
         kl = D.kl_divergence(posterior_dist, prior_dist).mean()
@@ -183,51 +183,29 @@ class VAE(pl.LightningModule):
         self.log('val_kl', kl, on_step=False, on_epoch=True)
         self.log('val_loss', loss, on_step=False, on_epoch=True)
 
-    def infer_loss(self, x, y, z):
-        batch_size = len(x)
+    def infer_loss(self, x, z):
         # log p(x|z_c,z_s)
-        log_prob_x_z = self.decoder(x, z)
+        log_prob_x_z = self.decoder(x, z).mean()
         # log p(y|z_c)
         z_c, z_s = torch.chunk(z, 2, dim=1)
-        y_pred = F.log_softmax(self.classifier(z_c), dim=1)
-        log_prob_y_zc = y_pred[torch.arange(batch_size), y]
+        prob_y1_zc = torch.sigmoid(self.classifier(z_c))
+        prob_y0_zc = 1 - prob_y1_zc
+        log_prob_y_zc = torch.log(torch.hstack((prob_y0_zc, prob_y1_zc)).max(dim=1).values).mean()
         # log q(z_c,z_s|x)
-        log_prob_z_x = self.encoder(x).log_prob(z)
+        log_prob_z_x = self.encoder(x).log_prob(z).mean()
         return log_prob_x_z, log_prob_y_zc, log_prob_z_x
 
-    def opt_infer_loss(self, x, y_value):
-        batch_size = len(x)
+    def infer_z(self, x):
         z_param = nn.Parameter(self.encoder(x).loc.detach())
-        y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
         optim = Adam([z_param], lr=self.lr_infer)
         for _ in range(self.n_infer_steps):
             optim.zero_grad()
-            log_prob_x_z, log_prob_y_zc, log_prob_z_x = self.infer_loss(x, y, z_param)
+            log_prob_x_z, log_prob_y_zc, log_prob_z_x = self.infer_loss(x, z_param)
             loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z_x
-            loss.mean().backward()
+            loss.backward()
             optim.step()
-        return log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss
-
-    def infer_z(self, x):
-        log_prob_x_z_values, log_prob_y_zc_values, log_prob_z_x_values, loss_values, y_values = [], [], [], [], []
-        for y_value in range(N_CLASSES):
-            log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss = self.opt_infer_loss(x, y_value)
-            log_prob_x_z_values.append(log_prob_x_z.unsqueeze(-1))
-            log_prob_y_zc_values.append(log_prob_y_zc.unsqueeze(-1))
-            log_prob_z_x_values.append(log_prob_z_x.unsqueeze(-1))
-            loss_values.append(loss.unsqueeze(-1))
-            y_values.append(y_value)
-        log_prob_x_z_values = torch.hstack(log_prob_x_z_values)
-        log_prob_y_zc_values = torch.hstack(log_prob_y_zc_values)
-        log_prob_z_x_values = torch.hstack(log_prob_z_x_values)
-        loss_values = torch.hstack(loss_values)
-        y_values = torch.tensor(y_values, device=self.device)
-        opt_idxs = torch.argmin(loss_values, dim=1)
-        log_prob_x_z = log_prob_x_z_values[:, opt_idxs].mean()
-        log_prob_y_zc = log_prob_y_zc_values[:, opt_idxs].mean()
-        log_prob_z_x = log_prob_z_x_values[:, opt_idxs].mean()
-        loss = loss_values[:, opt_idxs].mean()
-        y_pred = y_values[opt_idxs]
+        z_c, z_s = torch.chunk(z_param, 2, dim=1)
+        y_pred = self.classifier(z_c).view(-1)
         return log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss, y_pred
 
     def test_step(self, batch, batch_idx):
