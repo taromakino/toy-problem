@@ -135,7 +135,7 @@ class VAE(pl.LightningModule):
         # p(z_c,z_s|y,e)
         self.prior = Prior(z_size, rank, prior_init_sd)
         # p(y|z_c)
-        self.classifier = MLP(z_size, h_sizes, 1)
+        self.classifier = MLP(z_size, h_sizes, N_CLASSES)
         self.eval_metric = Accuracy('binary')
 
     def sample_z(self, dist):
@@ -152,8 +152,8 @@ class VAE(pl.LightningModule):
         log_prob_x_z = self.decoder(x, z).mean()
         # E_q(z_c|x)[log p(y|z_c)]
         z_c, z_s = torch.chunk(z, 2, dim=1)
-        y_pred = self.classifier(z_c).view(-1)
-        log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float())
+        y_pred = self.classifier(z_c)
+        log_prob_y_zc = -F.cross_entropy(y_pred, y)
         # KL(q(z_c,z_s|x) || p(z_c|e)p(z_s|y,e))
         prior_dist = self.prior(y, e)
         kl = D.kl_divergence(posterior_dist, prior_dist).mean()
@@ -184,12 +184,13 @@ class VAE(pl.LightningModule):
         self.log('val_loss', loss, on_step=False, on_epoch=True)
 
     def infer_loss(self, x, y, z):
+        batch_size = len(x)
         # log p(x|z_c,z_s)
         log_prob_x_z = self.decoder(x, z)
         # log p(y|z_c)
         z_c, z_s = torch.chunk(z, 2, dim=1)
-        y_pred = self.classifier(z_c).view(-1)
-        log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
+        y_pred = F.log_softmax(self.classifier(z_c), dim=1)
+        log_prob_y_zc = y_pred[torch.arange(batch_size), y]
         # log q(z_c,z_s|x)
         log_prob_z_x = self.encoder(x).log_prob(z)
         return log_prob_x_z, log_prob_y_zc, log_prob_z_x
