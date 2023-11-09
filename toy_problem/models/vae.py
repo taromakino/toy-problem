@@ -10,6 +10,7 @@ from torchmetrics import Accuracy
 from utils.enums import Task
 from utils.nn_utils import MLP, arr_to_cov, arr_to_tril
 
+
 IMAGE_EMBED_SHAPE = (32, 3, 3)
 IMAGE_EMBED_SIZE = np.prod(IMAGE_EMBED_SHAPE)
 
@@ -191,8 +192,7 @@ class VAE(pl.LightningModule):
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
         # log q(z_c,z_s|x)
         log_prob_z_x = self.encoder(x).log_prob(z)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z_x
-        return loss
+        return log_prob_x_z, log_prob_y_zc, log_prob_z_x
 
     def opt_infer_loss(self, x, y_value):
         batch_size = len(x)
@@ -201,28 +201,42 @@ class VAE(pl.LightningModule):
         optim = Adam([z_param], lr=self.lr_infer)
         for _ in range(self.n_infer_steps):
             optim.zero_grad()
-            loss = self.infer_loss(x, y, z_param)
+            log_prob_x_z, log_prob_y_zc, log_prob_z_x = self.infer_loss(x, y, z_param)
+            loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z_x
             loss.mean().backward()
             optim.step()
-        return loss.detach().clone()
+        return log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss
 
     def infer_z(self, x):
-        loss_candidates = []
-        y_candidates = []
+        log_prob_x_z_values, log_prob_y_zc_values, log_prob_z_x_values, loss_values, y_values = [], [], [], [], []
         for y_value in range(N_CLASSES):
-            loss_candidates.append(self.opt_infer_loss(x, y_value)[:, None])
-            y_candidates.append(y_value)
-        loss_candidates = torch.hstack(loss_candidates)
-        y_candidates = torch.tensor(y_candidates, device=self.device)
-        opt_loss = loss_candidates.min(dim=1)
-        y_pred = y_candidates[opt_loss.indices]
-        return opt_loss.values.mean(), y_pred
+            log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss = self.opt_infer_loss(x, y_value)
+            log_prob_x_z_values.append(log_prob_x_z.unsqueeze(-1))
+            log_prob_y_zc_values.append(log_prob_y_zc.unsqueeze(-1))
+            log_prob_z_x_values.append(log_prob_z_x.unsqueeze(-1))
+            loss_values.append(loss.unsqueeze(-1))
+            y_values.append(y_value)
+        log_prob_x_z_values = torch.hstack(log_prob_x_z_values)
+        log_prob_y_zc_values = torch.hstack(log_prob_y_zc_values)
+        log_prob_z_x_values = torch.hstack(log_prob_z_x_values)
+        loss_values = torch.hstack(loss_values)
+        y_values = torch.tensor(y_values, device=self.device)
+        opt_idxs = torch.argmin(loss_values, dim=1)
+        log_prob_x_z = log_prob_x_z_values[:, opt_idxs].mean()
+        log_prob_y_zc = log_prob_y_zc_values[:, opt_idxs].mean()
+        log_prob_z_x = log_prob_z_x_values[:, opt_idxs].mean()
+        loss = loss_values[:, opt_idxs].mean()
+        y_pred = y_values[opt_idxs]
+        return log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss, y_pred
 
     def test_step(self, batch, batch_idx):
         assert self.task == Task.CLASSIFY
         x, y, e, c, s = batch
         with torch.set_grad_enabled(True):
-            loss, y_pred = self.infer_z(x)
+            log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss, y_pred = self.infer_z(x)
+            self.log('log_prob_x_z', log_prob_x_z, on_step=False, on_epoch=True)
+            self.log('log_prob_y_zc', log_prob_y_zc, on_step=False, on_epoch=True)
+            self.log('log_prob_z_x', log_prob_z_x, on_step=False, on_epoch=True)
             self.log('loss', loss, on_step=False, on_epoch=True)
             self.eval_metric.update(y_pred, y)
 
