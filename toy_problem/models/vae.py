@@ -250,8 +250,8 @@ class VAE(pl.LightningModule):
             log_prob_x_z_values.append(log_prob_x_z.unsqueeze(-1))
             log_prob_y_zc_values.append(log_prob_y0_zc.unsqueeze(-1))
             log_prob_y_zc_values.append(log_prob_y1_zc.unsqueeze(-1))
-            log_prob_z_values.append(log_prob_x_z.unsqueeze(-1))
-            log_prob_z_values.append(log_prob_x_z.unsqueeze(-1))
+            log_prob_z_values.append(log_prob_z.unsqueeze(-1))
+            log_prob_z_values.append(log_prob_z.unsqueeze(-1))
             loss_values.append((-log_prob_x_z - self.y_mult * log_prob_y0_zc - self.alpha * log_prob_z).unsqueeze(-1))
             loss_values.append((-log_prob_x_z - self.y_mult * log_prob_y1_zc - self.alpha * log_prob_z).unsqueeze(-1))
             y_values.append(0)
@@ -273,10 +273,10 @@ class VAE(pl.LightningModule):
         assert self.task == Task.CLASSIFY
         x, y, e, c, s = batch
         with torch.set_grad_enabled(True):
-            log_prob_x_z, log_prob_y_zc, log_prob_z_x, loss, y_pred = self.infer_z(x)
+            log_prob_x_z, log_prob_y_zc, log_prob_z, loss, y_pred = self.infer_z(x)
             self.log('log_prob_x_z', log_prob_x_z, on_step=False, on_epoch=True)
             self.log('log_prob_y_zc', log_prob_y_zc, on_step=False, on_epoch=True)
-            self.log('log_prob_z_x', log_prob_z_x, on_step=False, on_epoch=True)
+            self.log('log_prob_z', log_prob_z, on_step=False, on_epoch=True)
             self.log('loss', loss, on_step=False, on_epoch=True)
             self.eval_metric.update(y_pred, y)
 
