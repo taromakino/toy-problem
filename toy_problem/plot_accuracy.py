@@ -47,6 +47,6 @@ if __name__ == '__main__':
     parser.add_argument('--dpath', type=str, default='results')
     parser.add_argument('--dataset', type=str, required=True)
     parser.add_argument('--n_seeds', type=int, default=5)
-    parser.add_argument('--y_mult', type=int, default=10)
-    parser.add_argument('--beta_range', nargs='+', type=int, default=[2, 4, 6, 8])
+    parser.add_argument('--y_mult', type=int, default=5)
+    parser.add_argument('--beta_range', nargs='+', type=int, default=[1, 2, 3, 4, 5])
     main(parser.parse_args())
