@@ -206,9 +206,11 @@ class VAE(pl.LightningModule):
         z_c, z_s = torch.chunk(z, 2, dim=1)
         y_pred = self.classifier(z_c).view(-1)
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
-        # log p(z_c|e)
-        log_prob_z_ye = self.prior(y, e).log_prob(z)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z_ye
+        # KL(q(z_c,z_s|x) || p(z_c|e)p(z_s|y,e))
+        posterior_dist = self.encoder(x, y, e)
+        prior_dist = self.prior(y, e)
+        kl = D.kl_divergence(posterior_dist, prior_dist)
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.alpha * kl
         return loss
 
     def opt_infer_loss(self, x, y_value, e_value):
