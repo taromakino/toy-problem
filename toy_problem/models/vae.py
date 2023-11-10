@@ -233,6 +233,8 @@ class VAE(pl.LightningModule):
         x, y, e, c, s = batch
         with torch.set_grad_enabled(True):
             batch_size = len(x)
+            loss_values = []
+            y_pred_values = []
             for e_value in range(N_ENVS):
                 e = torch.full((batch_size,), e_value, dtype=torch.long, device=self.device)
                 z_param = self.make_z_param(x, e_value)
@@ -243,8 +245,14 @@ class VAE(pl.LightningModule):
                     loss = -log_prob_x_z - self.alpha * log_prob_z
                     loss.mean().backward()
                     optim.step()
-            z_c, z_s = torch.chunk(z_param, 2, dim=1)
-            y_pred = self.classifier(z_c).view(-1)
+                z_c, z_s = torch.chunk(z_param, 2, dim=1)
+                y_pred = self.classifier(z_c)
+                loss_values.append(loss.unsqueeze(-1))
+                y_pred_values.append(y_pred)
+            loss_values = torch.hstack(loss_values)
+            y_pred_values = torch.hstack(y_pred_values)
+            opt_idxs = torch.argmin(loss_values, dim=1)
+            y_pred = y_pred_values[torch.arange(batch_size), opt_idxs]
             self.eval_metric.update(y_pred, y)
 
     def on_test_epoch_end(self):
