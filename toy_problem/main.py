@@ -47,8 +47,8 @@ def make_model(args, task, is_train):
         else:
             return erm.ERM_S.load_from_checkpoint(ckpt_fpath(args, task))
     elif task == Task.VAE:
-        return vae.VAE(task, args.z_size, args.rank, args.h_sizes, args.prior_init_sd, args.y_mult, args.beta,
-            args.reg_mult, args.lr, args.weight_decay, args.alpha, args.lr_infer, args.n_infer_steps)
+        return vae.VAE(task, args.z_size, args.rank, args.h_sizes, args.y_mult, args.beta, args.reg_mult, args.lr,
+            args.weight_decay, args.alpha, args.lr_infer, args.n_infer_steps)
     else:
         assert task == Task.CLASSIFY
         return vae.VAE.load_from_checkpoint(ckpt_fpath(args, Task.VAE), task=task, alpha=args.alpha, lr_infer=args.lr_infer,
@@ -71,11 +71,12 @@ def run_task(args, task, eval_stage):
                 callbacks=[
                     EarlyStopping(monitor='val_metric', mode='max', patience=int(args.early_stop_ratio * args.n_epochs)),
                     ModelCheckpoint(monitor='val_metric', mode='max', filename='best')],
-                max_epochs=args.n_epochs)
+                max_epochs=args.n_epochs,
+                deterministic=True)
             trainer.fit(model, data_train, data_val)
         else:
             trainer = pl.Trainer(logger=CSVLogger(os.path.join(args.dpath, task.value, eval_stage.value),
-                name='', version=args.seed), max_epochs=1)
+                name='', version=args.seed), max_epochs=1, deterministic=True)
             trainer.test(model, data_eval)
     elif task == Task.VAE:
         trainer = pl.Trainer(
@@ -83,7 +84,8 @@ def run_task(args, task, eval_stage):
             callbacks=[
                 EarlyStopping(monitor='val_loss', patience=int(args.early_stop_ratio * args.n_epochs)),
                 ModelCheckpoint(monitor='val_loss', filename='best')],
-            max_epochs=args.n_epochs)
+            max_epochs=args.n_epochs,
+            deterministic=True)
         trainer.fit(model, data_train, data_val)
         save_file(args, os.path.join(args.dpath, task.value, f'version_{args.seed}', 'args.pkl'))
     else:
@@ -92,6 +94,7 @@ def run_task(args, task, eval_stage):
             logger=CSVLogger(os.path.join(args.dpath, task.value, eval_stage.value), name='',
                 version=args.seed),
             max_epochs=1,
+            deterministic=True,
             inference_mode=False)
         trainer.test(model, data_eval)
 
@@ -119,7 +122,6 @@ if __name__ == '__main__':
     parser.add_argument('--z_size', type=int, default=16)
     parser.add_argument('--rank', type=int, default=16)
     parser.add_argument('--h_sizes', nargs='+', type=int, default=[256, 256])
-    parser.add_argument('--prior_init_sd', type=float, default=0.1)
     parser.add_argument('--y_mult', type=float, default=1)
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--reg_mult', type=float, default=1e-5)
