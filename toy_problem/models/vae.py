@@ -162,27 +162,21 @@ class VAE(pl.LightningModule):
         # KL(q(z_c,z_s|x) || p(z_c|e)p(z_s|y,e))
         prior_dist = self.prior(y, e)
         kl = D.kl_divergence(posterior_dist, prior_dist).mean()
-        prior_reg = self.prior_reg(prior_dist)
-        return log_prob_x_z, log_prob_y_zc, kl, prior_reg
-
-    def prior_reg(self, prior_dist):
-        mu = torch.zeros((1, 2 * self.z_size), device=self.device)
-        cov = torch.eye(2 * self.z_size, device=self.device).unsqueeze(0)
-        standard_normal = D.MultivariateNormal(mu, cov)
-        return D.kl_divergence(prior_dist, standard_normal).mean()
+        z_norm = (z ** 2).sum(dim=1).mean()
+        return log_prob_x_z, log_prob_y_zc, kl, z_norm
 
     def training_step(self, batch, batch_idx):
         assert self.task == Task.VAE
         x, y, e, c, s = batch
-        log_prob_x_z, log_prob_y_zc, kl, prior_reg = self.elbo(x, y, e)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl + self.reg_mult * prior_reg
+        log_prob_x_z, log_prob_y_zc, kl, z_norm = self.elbo(x, y, e)
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl + self.reg_mult * z_norm
         return loss
 
     def validation_step(self, batch, batch_idx):
         assert self.task == Task.VAE
         x, y, e, c, s = batch
-        log_prob_x_z, log_prob_y_zc, kl, prior_reg = self.elbo(x, y, e)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl + self.reg_mult * prior_reg
+        log_prob_x_z, log_prob_y_zc, kl, z_norm = self.elbo(x, y, e)
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl + self.reg_mult * z_norm
         self.log('val_log_prob_x_z', log_prob_x_z, on_step=False, on_epoch=True)
         self.log('val_log_prob_y_zc', log_prob_y_zc, on_step=False, on_epoch=True)
         self.log('val_kl', kl, on_step=False, on_epoch=True)
@@ -195,9 +189,8 @@ class VAE(pl.LightningModule):
         z_c, z_s = torch.chunk(z, 2, dim=1)
         y_pred = self.classifier(z_c).view(-1)
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
-        # log q(z_c,z_s|x)
-        log_prob_z_x = self.encoder(x).log_prob(z)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.alpha * log_prob_z_x
+        z_norm = (z ** 2).sum(dim=1)
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.reg_mult * z_norm
         return loss
 
     def classify(self, x):
