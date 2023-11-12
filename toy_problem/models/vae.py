@@ -8,7 +8,7 @@ from data import N_CLASSES, N_ENVS
 from torch.optim import Adam
 from torchmetrics import Accuracy
 from utils.enums import Task
-from utils.nn_utils import MLP, one_hot, arr_to_cov, arr_to_tril
+from utils.nn_utils import MLP, arr_to_cov, arr_to_tril
 
 
 IMAGE_EMBED_SHAPE = (32, 3, 3)
@@ -52,22 +52,17 @@ class Encoder(nn.Module):
         self.z_size = z_size
         self.rank = rank
         self.cnn = CNN()
-        self.mu = MLP(IMAGE_EMBED_SIZE, h_sizes, N_CLASSES * N_ENVS * 2 * z_size)
-        self.low_rank = MLP(IMAGE_EMBED_SIZE, h_sizes, N_CLASSES * N_ENVS * 2 * z_size * 2 * rank)
-        self.diag = MLP(IMAGE_EMBED_SIZE, h_sizes, N_CLASSES * N_ENVS * 2 * z_size)
+        self.mu = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size)
+        self.low_rank = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size * 2 * rank)
+        self.diag = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size)
 
-    def forward(self, x, y, e):
+    def forward(self, x):
         batch_size = len(x)
         x = self.cnn(x).view(batch_size, -1)
         mu = self.mu(x)
-        mu = mu.reshape(batch_size, N_CLASSES, N_ENVS, 2 * self.z_size)
-        mu = mu[torch.arange(batch_size), y, e]
         low_rank = self.low_rank(x)
-        low_rank = low_rank.reshape(batch_size, N_CLASSES, N_ENVS, 2 * self.z_size, 2 * self.rank)
-        low_rank = low_rank[torch.arange(batch_size), y, e]
+        low_rank = low_rank.reshape(batch_size, 2 * self.z_size, 2 * self.rank)
         diag = self.diag(x)
-        diag = diag.reshape(batch_size, N_CLASSES, N_ENVS, 2 * self.z_size)
-        diag = diag[torch.arange(batch_size), y, e]
         return D.MultivariateNormal(mu, scale_tril=arr_to_tril(low_rank, diag))
 
 
@@ -156,16 +151,16 @@ class VAE(pl.LightningModule):
         return mu + torch.bmm(scale_tril, epsilon).squeeze()
 
     def elbo(self, x, y, e):
-        # z_c,z_s ~ q(z_c,z_s|x,y,e)
-        posterior_dist = self.encoder(x, y, e)
+        # z_c,z_s ~ q(z_c,z_s|x)
+        posterior_dist = self.encoder(x)
         z = self.sample_z(posterior_dist)
-        # E_q(z_c,z_s|x,y,e)[log p(x|z_c,z_s)]
+        # E_q(z_c,z_s|x)[log p(x|z_c,z_s)]
         log_prob_x_z = self.decoder(x, z).mean()
         # E_q(z_c|x)[log p(y|z_c)]
         z_c, z_s = torch.chunk(z, 2, dim=1)
         y_pred = self.classifier(z_c).view(-1)
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float())
-        # KL(q(z_c,z_s|x,y,e) || p(z_c|e)p(z_s|y,e))
+        # KL(q(z_c,z_s|x) || p(z_c|e)p(z_s|y,e))
         prior_dist = self.prior(y, e)
         kl = D.kl_divergence(posterior_dist, prior_dist).mean()
         z_norm = (z ** 2).sum(dim=1).mean()
