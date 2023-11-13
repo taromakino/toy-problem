@@ -125,7 +125,6 @@ class VAE(pl.LightningModule):
         self.save_hyperparameters()
         self.task = task
         self.z_size = z_size
-        self.init_sd = init_sd
         self.y_mult = y_mult
         self.beta = beta
         self.reg_mult = reg_mult
@@ -198,8 +197,7 @@ class VAE(pl.LightningModule):
         batch_size = len(x)
         loss_values = []
         for y_value in range(N_CLASSES):
-            z_param = nn.Parameter(torch.zeros(batch_size, 2 * self.z_size, device=self.device))
-            nn.init.normal_(z_param, 0, self.init_sd)
+            z_param = nn.Parameter(self.encoder(x).loc.detach())
             y = torch.full((batch_size,), y_value, dtype=torch.long, device=self.device)
             optim = Adam([z_param], lr=self.lr_infer)
             for _ in range(self.n_infer_steps):
