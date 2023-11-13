@@ -47,14 +47,14 @@ class DCNN(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, z_size, rank, h_sizes, dropout_prob):
+    def __init__(self, z_size, rank, h_sizes):
         super().__init__()
         self.z_size = z_size
         self.rank = rank
         self.cnn = CNN()
-        self.mu = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size, dropout_prob)
-        self.low_rank = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size * 2 * rank, dropout_prob)
-        self.diag = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size, dropout_prob)
+        self.mu = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size)
+        self.low_rank = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size * 2 * rank)
+        self.diag = MLP(IMAGE_EMBED_SIZE, h_sizes, 2 * z_size)
 
     def forward(self, x):
         batch_size = len(x)
@@ -67,9 +67,9 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, z_size, h_sizes, dropout_prob):
+    def __init__(self, z_size, h_sizes):
         super().__init__()
-        self.mlp = MLP(2 * z_size, h_sizes, IMAGE_EMBED_SIZE, dropout_prob)
+        self.mlp = MLP(2 * z_size, h_sizes, IMAGE_EMBED_SIZE)
         self.dcnn = DCNN()
 
     def forward(self, x, z):
@@ -119,8 +119,8 @@ class Prior(nn.Module):
 
 
 class VAE(pl.LightningModule):
-    def __init__(self, task, z_size, rank, h_sizes, init_sd, y_mult, beta, reg_mult, dropout_prob, lr, weight_decay,
-            alpha, lr_infer, n_infer_steps):
+    def __init__(self, task, z_size, rank, h_sizes, init_sd, y_mult, beta, reg_mult, lr, weight_decay, alpha, lr_infer,
+            n_infer_steps):
         super().__init__()
         self.save_hyperparameters()
         self.task = task
@@ -128,20 +128,19 @@ class VAE(pl.LightningModule):
         self.y_mult = y_mult
         self.beta = beta
         self.reg_mult = reg_mult
-        self.dropout_prob = dropout_prob
         self.lr = lr
         self.weight_decay = weight_decay
         self.alpha = alpha
         self.lr_infer = lr_infer
         self.n_infer_steps = n_infer_steps
         # q(z|x,y,e)
-        self.encoder = Encoder(z_size, rank, h_sizes, dropout_prob)
+        self.encoder = Encoder(z_size, rank, h_sizes)
         # p(x|z_c,z_s)
-        self.decoder = Decoder(z_size, h_sizes, dropout_prob)
+        self.decoder = Decoder(z_size, h_sizes)
         # p(z_c,z_s|y,e)
         self.prior = Prior(z_size, rank, init_sd)
         # p(y|z_c)
-        self.classifier = MLP(z_size, h_sizes, 1, dropout_prob)
+        self.classifier = MLP(z_size, h_sizes, 1)
         self.eval_metric = Accuracy('binary')
 
     def sample_z(self, dist):
