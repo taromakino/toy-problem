@@ -37,7 +37,3 @@ def one_hot(categorical, n_categories):
 def arr_to_cov(low_rank, diag):
     return torch.bmm(low_rank, low_rank.transpose(1, 2)) + torch.diag_embed(F.softplus(diag) + torch.full_like(diag,
         COV_OFFSET))
-
-
-def arr_to_tril(low_rank, diag):
-    return torch.linalg.cholesky(arr_to_cov(low_rank, diag))
