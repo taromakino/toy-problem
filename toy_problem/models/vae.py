@@ -198,24 +198,24 @@ class VAE(pl.LightningModule):
         prior_dist = self.prior(y, e)
         kl = D.kl_divergence(posterior_dist, prior_dist).mean()
         entropy = posterior_dist.entropy().mean()
-        prior_cross_entropy = kl + entropy
-        return log_prob_x_z, log_prob_y_zc, prior_cross_entropy
+        log_prob_z_ye = -kl - entropy
+        return log_prob_x_z, log_prob_y_zc, log_prob_z_ye
 
     def training_step(self, batch, batch_idx):
         assert self.task == Task.VAE
         x, y, e, c, s = batch
-        log_prob_x_z, log_prob_y_zc, prior_cross_entropy = self.elbo(x, y, e)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * prior_cross_entropy
+        log_prob_x_z, log_prob_y_zc, log_prob_z_ye = self.elbo(x, y, e)
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.beta * log_prob_z_ye
         return loss
 
     def validation_step(self, batch, batch_idx):
         assert self.task == Task.VAE
         x, y, e, c, s = batch
-        log_prob_x_z, log_prob_y_zc, prior_cross_entropy = self.elbo(x, y, e)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * prior_cross_entropy
+        log_prob_x_z, log_prob_y_zc, log_prob_z_ye = self.elbo(x, y, e)
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - self.beta * log_prob_z_ye
         self.log('val_log_prob_x_z', log_prob_x_z, on_step=False, on_epoch=True)
         self.log('val_log_prob_y_zc', log_prob_y_zc, on_step=False, on_epoch=True)
-        self.log('val_prior_cross_entropy', prior_cross_entropy, on_step=False, on_epoch=True)
+        self.log('val_log_prob_z_ye', log_prob_z_ye, on_step=False, on_epoch=True)
         self.log('val_loss', loss, on_step=False, on_epoch=True)
 
     def infer_loss(self, x, y, e, z):
