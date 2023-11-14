@@ -47,8 +47,8 @@ def make_model(args, task, is_train):
         else:
             return erm.ERM_S.load_from_checkpoint(ckpt_fpath(args, task))
     elif task == Task.VAE:
-        return vae.VAE(task, args.z_size, args.rank, args.h_sizes, args.y_mult, args.beta, args.init_sd, args.kl_lb,
-            args.lr, args.weight_decay, args.causal_mult, args.spurious_mult, args.lr_infer, args.n_infer_steps)
+        return vae.VAE(task, args.z_size, args.rank, args.h_sizes, args.init_sd, args.y_mult, args.beta, args.lr,
+            args.weight_decay, args.causal_mult, args.spurious_mult, args.lr_infer, args.n_infer_steps)
     else:
         assert task == Task.CLASSIFY
         return vae.VAE.load_from_checkpoint(ckpt_fpath(args, Task.VAE), task=task, causal_mult=args.causal_mult,
@@ -125,7 +125,6 @@ if __name__ == '__main__':
     parser.add_argument('--rank', type=int, default=32)
     parser.add_argument('--h_sizes', nargs='+', type=int, default=[256, 256])
     parser.add_argument('--init_sd', type=float, default=0.1)
-    parser.add_argument('--kl_lb', type=float, default=1)
     parser.add_argument('--y_mult', type=float, default=1)
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--lr', type=float, default=1e-3)
