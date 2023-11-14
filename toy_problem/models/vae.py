@@ -143,14 +143,15 @@ class Prior(nn.Module):
 
 
 class VAE(pl.LightningModule):
-    def __init__(self, task, z_size, rank, h_sizes, init_sd, y_mult, beta, lr, weight_decay, causal_mult, spurious_mult,
-            lr_infer, n_infer_steps):
+    def __init__(self, task, z_size, rank, h_sizes, y_mult, beta, init_sd, kl_lb, lr, weight_decay, causal_mult,
+            spurious_mult, lr_infer, n_infer_steps):
         super().__init__()
         self.save_hyperparameters()
         self.task = task
         self.z_size = z_size
         self.y_mult = y_mult
         self.beta = beta
+        self.kl_lb = kl_lb
         self.lr = lr
         self.weight_decay = weight_decay
         self.causal_mult = causal_mult
@@ -196,14 +197,16 @@ class VAE(pl.LightningModule):
         assert self.task == Task.VAE
         x, y, e, c, s = batch
         log_prob_x_z, log_prob_y_zc, kl_causal, kl_spurious = self.elbo(x, y, e)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl_causal + self.beta * kl_spurious
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * (max(self.kl_lb, kl_causal) +
+            max(self.kl_lb, kl_spurious))
         return loss
 
     def validation_step(self, batch, batch_idx):
         assert self.task == Task.VAE
         x, y, e, c, s = batch
         log_prob_x_z, log_prob_y_zc, kl_causal, kl_spurious = self.elbo(x, y, e)
-        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * kl_causal + self.beta * kl_spurious
+        loss = -log_prob_x_z - self.y_mult * log_prob_y_zc + self.beta * (max(self.kl_lb, kl_causal) +
+            max(self.kl_lb, kl_spurious))
         self.log('val_log_prob_x_z', log_prob_x_z, on_step=False, on_epoch=True)
         self.log('val_log_prob_y_zc', log_prob_y_zc, on_step=False, on_epoch=True)
         self.log('val_kl_causal', kl_causal, on_step=False, on_epoch=True)
