@@ -7,13 +7,12 @@ import torch.nn.functional as F
 from data import N_CLASSES, N_ENVS
 from torch.optim import Adam
 from torchmetrics import Accuracy
-from utils.enums import Task
 from utils.nn_utils import MLP, arr_to_cov
 
 
 IMAGE_EMBED_SHAPE = (32, 3, 3)
 IMAGE_EMBED_SIZE = np.prod(IMAGE_EMBED_SHAPE)
-PRIOR_INIT_SD = 0.01
+PRIOR_INIT_SD = 0.1
 
 
 class CNN(nn.Module):
