@@ -37,8 +37,7 @@ def main(args):
     for example_idx in range(N_EXAMPLES):
         x_seed, y_seed, e_seed = x[[example_idx]], y[[example_idx]], e[[example_idx]]
         x_seed, y_seed, e_seed = x_seed.to(model.device), y_seed.to(model.device), e_seed.to(model.device)
-        _, _, posterior_dist_seed = model.encoder(x_seed, y_seed, e_seed)
-        z_seed = posterior_dist_seed.loc
+        z_seed = model.encoder(x_seed, y_seed, e_seed).loc
         zc_seed, zs_seed = torch.chunk(z_seed, 2, dim=1)
         fig, axes = plt.subplots(2, N_COLS, figsize=(2 * N_COLS, 2 * 2))
         for ax in axes.flatten():
