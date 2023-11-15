@@ -33,6 +33,7 @@ def main(args):
     pl.seed_everything(args.seed)
     dataloader, _, _ = MAKE_DATA[args.dataset](args.train_ratio, args.batch_size)
     model = VAE.load_from_checkpoint(os.path.join(task_dpath, f'version_{args.seed}', 'checkpoints', 'best.ckpt'))
+    model.eval()
     x, y, e, c, s = dataloader.dataset[:]
     for example_idx in range(N_EXAMPLES):
         x_seed, y_seed, e_seed = x[[example_idx]], y[[example_idx]], e[[example_idx]]
