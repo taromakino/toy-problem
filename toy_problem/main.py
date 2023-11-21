@@ -10,9 +10,9 @@ from pytorch_lightning.loggers import CSVLogger
 from utils.enums import Task, EvalStage
 
 
-def make_data(args, eval_stage):
+def make_data(args, task, eval_stage):
     data_train, data_val, data_test = MAKE_DATA[args.dataset](args.train_ratio, args.batch_size, args.eval_batch_size,
-        args.n_eval_examples)
+        args.n_eval_examples if task == Task.VAE else None)
     if eval_stage is None:
         data_eval = None
     elif eval_stage == EvalStage.TRAIN:
@@ -50,12 +50,13 @@ def make_model(args, task, is_train):
             args.n_samples, args.lr, args.weight_decay, args.lr_infer, args.n_infer_steps)
     else:
         assert task == Task.CLASSIFY
-        return vae.VAE.load_from_checkpoint(ckpt_fpath(args, Task.VAE), task=args.task, lr_infer=args.lr_infer, n_infer_steps=args.n_infer_steps)
+        return vae.VAE.load_from_checkpoint(ckpt_fpath(args, Task.VAE), task=args.task, lr_infer=args.lr_infer,
+            n_infer_steps=args.n_infer_steps)
 
 
 def run_task(args, task, eval_stage):
     pl.seed_everything(args.seed)
-    data_train, data_val, data_test, data_eval = make_data(args, eval_stage)
+    data_train, data_val, data_test, data_eval = make_data(args, task, eval_stage)
     is_train = eval_stage is None
     model = make_model(args, task, is_train)
     if task in [

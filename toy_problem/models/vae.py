@@ -230,7 +230,7 @@ class VAE(pl.LightningModule):
         log_prob_y_zc = -F.binary_cross_entropy_with_logits(y_pred, y.float(), reduction='none')
         # log q(z)
         log_prob_z = D.MultivariateNormal(self.z_mu.to(self.device), self.z_cov.to(self.device)).log_prob(z.unsqueeze(1))
-        log_prob_z = torch.logsumexp(log_prob_z, dim=1)
+        log_prob_z = torch.logsumexp(log_prob_z, dim=1) - np.log(self.n_samples)
         loss = -log_prob_x_z - self.y_mult * log_prob_y_zc - log_prob_z
         return loss
 
