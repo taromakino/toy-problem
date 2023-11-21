@@ -4,7 +4,7 @@ import os
 import pytorch_lightning as pl
 import torch
 from data import N_CLASSES, N_ENVS, MAKE_DATA, PLOT
-from models.vae import IMAGE_EMBED_SHAPE, VAE
+from models.vae import IMG_EMBED_SHAPE, VAE
 from utils.enums import Task
 
 
@@ -22,7 +22,7 @@ def sample_prior(rng, model):
 
 def reconstruct_x(model, z):
     batch_size = len(z)
-    x_pred = model.decoder.mlp(z).reshape(batch_size, *IMAGE_EMBED_SHAPE)
+    x_pred = model.decoder.mlp(z).reshape(batch_size, *IMG_EMBED_SHAPE)
     x_pred = model.decoder.dcnn(x_pred)
     return torch.sigmoid(x_pred)
 
@@ -31,7 +31,8 @@ def main(args):
     rng = np.random.RandomState(args.seed)
     task_dpath = os.path.join(args.dpath, Task.VAE.value)
     pl.seed_everything(args.seed)
-    dataloader, _, _ = MAKE_DATA[args.dataset](args.train_ratio, args.batch_size)
+    dataloader, _, _ = MAKE_DATA[args.dataset](args.train_ratio, args.batch_size, args.eval_batch_size,
+        args.n_eval_examples)
     model = VAE.load_from_checkpoint(os.path.join(task_dpath, f'version_{args.seed}', 'checkpoints', 'best.ckpt'))
     model.eval()
     x, y, e, c, s = dataloader.dataset[:]

@@ -8,15 +8,15 @@ COV_OFFSET = 1e-6
 
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim):
+    def __init__(self, input_size, h_sizes, output_size):
         super().__init__()
         module_list = []
-        last_in_dim = input_dim
-        for hidden_dim in hidden_dims:
-            module_list.append(nn.Linear(last_in_dim, hidden_dim))
+        last_size = input_size
+        for h_size in h_sizes:
+            module_list.append(nn.Linear(last_size, h_size))
             module_list.append(nn.LeakyReLU())
-            last_in_dim = hidden_dim
-        module_list.append(nn.Linear(last_in_dim, output_dim))
+            last_size = h_size
+        module_list.append(nn.Linear(last_size, output_size))
         self.module_list = nn.Sequential(*module_list)
 
     def forward(self, *args):
@@ -25,13 +25,6 @@ class MLP(nn.Module):
 
 def make_dataloader(data_tuple, batch_size, is_train):
     return DataLoader(TensorDataset(*data_tuple), shuffle=is_train, batch_size=batch_size)
-
-
-def one_hot(categorical, n_categories):
-    batch_size = len(categorical)
-    out = torch.zeros((batch_size, n_categories), device=categorical.device)
-    out[torch.arange(batch_size), categorical] = 1
-    return out
 
 
 def arr_to_cov(low_rank, diag):
